@@ -236,3 +236,39 @@ export const updateProfile = async (req, res) => {
         return res.status(500).json({ message: "Error updating profile." });
     }
 };
+export const getAllCustomers = async (req, res) => {
+    try {
+        const customers = await prisma.user.findMany({
+            where: { role: "CUSTOMER" },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                phone: true,
+                createdAt: true,
+                addresses: {
+                    select: {
+                        city: true,
+                        address: true,
+                        pincode: true,
+                        isDefault: true,
+                    },
+                },
+                orders: {
+                    select: {
+                        id: true,
+                        totalAmount: true,
+                        status: true,
+                        createdAt: true,
+                    },
+                },
+            },
+            orderBy: { createdAt: "desc" },
+        });
+        return res.json({ customers });
+    }
+    catch (error) {
+        console.error("getAllCustomers Error:", error);
+        return res.status(500).json({ message: "Failed to fetch customers." });
+    }
+};

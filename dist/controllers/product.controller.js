@@ -98,71 +98,111 @@ export const createProduct = async (req, res) => {
     try {
         const { name, slug, categorySlug, categoryLabel, price, mrp, image, weight, makingCharges, metal, occasion, collection, badge, stock, description, } = req.body;
         const generatedSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-        const resolvedCategorySlug = categorySlug || req.body.category;
+        const resolvedCategorySlug = categorySlug || req.body.category || "rings";
         const setting = await prisma.systemSetting.findUnique({ where: { key: "silverRate" } });
         const silverRate = setting ? Number(setting.value) : 100;
-        const computedPrice = (Number(weight) * silverRate + Number(weight) * Number(makingCharges || 0)) * 1.05;
-        const product = await prisma.product.create({
-            data: {
-                name,
-                slug: generatedSlug,
-                categorySlug: resolvedCategorySlug,
-                categoryLabel: categoryLabel || resolvedCategorySlug,
-                price: Number(price) || computedPrice,
-                mrp: Number(mrp) || computedPrice * 1.2,
-                makingCharges: Number(makingCharges) || 0,
-                image,
-                weight: Number(weight),
-                metal: metal || "925 Sterling Silver",
-                occasion: occasion || "Everyday",
-                collection: collection || "Signature",
-                badge: badge || null,
-                stock: Number(stock) || 10,
-                description,
-            },
-        });
+        const computedPrice = (Number(weight || 0) * silverRate + Number(weight || 0) * Number(makingCharges || 0)) * 1.05;
+        const existing = await prisma.product.findUnique({ where: { slug: generatedSlug } });
+        const payload = {
+            name,
+            slug: generatedSlug,
+            categorySlug: resolvedCategorySlug,
+            categoryLabel: categoryLabel || resolvedCategorySlug,
+            price: Number(price) || computedPrice,
+            mrp: Number(mrp) || computedPrice * 1.2,
+            makingCharges: Number(makingCharges) || 0,
+            image: image || "",
+            weight: Number(weight) || 0,
+            metal: metal || "925 Sterling Silver",
+            occasion: occasion || "Everyday",
+            collection: collection || "Signature",
+            badge: badge || null,
+            stock: Number(stock) || 0,
+            description: description || "",
+        };
+        let product;
+        if (existing) {
+            product = await prisma.product.update({
+                where: { id: existing.id },
+                data: payload,
+            });
+        }
+        else {
+            product = await prisma.product.create({
+                data: payload,
+            });
+        }
         return res.status(201).json({ product });
     }
     catch (error) {
         console.error("createProduct Error:", error);
-        return res.status(500).json({ message: "Failed to create product." });
+        return res.status(500).json({ message: "Failed to create or update product." });
     }
 };
 export const updateProduct = async (req, res) => {
     try {
         const { id } = req.params;
-        const updateData = { ...req.body };
-        if (updateData.price)
-            updateData.price = Number(updateData.price);
-        if (updateData.mrp)
-            updateData.mrp = Number(updateData.mrp);
-        if (updateData.weight)
-            updateData.weight = Number(updateData.weight);
-        if (updateData.makingCharges !== undefined)
-            updateData.makingCharges = Number(updateData.makingCharges);
-        if (updateData.stock)
-            updateData.stock = Number(updateData.stock);
-        if (updateData.category) {
-            updateData.categorySlug = updateData.category;
-            delete updateData.category;
-        }
+        const isNum = !isNaN(Number(id));
+        const where = isNum ? { id: Number(id) } : { slug: String(id) };
+        const { name, slug, category, categorySlug, categoryLabel, price, mrp, makingCharges, image, weight, metal, occasion, collection, badge, stock, description, popularity, isFeatured, } = req.body;
+        const updateData = {};
+        if (name !== undefined)
+            updateData.name = name;
+        if (slug !== undefined)
+            updateData.slug = slug;
+        if (categorySlug !== undefined)
+            updateData.categorySlug = categorySlug;
+        else if (category !== undefined)
+            updateData.categorySlug = category;
+        if (categoryLabel !== undefined)
+            updateData.categoryLabel = categoryLabel;
+        if (price !== undefined)
+            updateData.price = Number(price);
+        if (mrp !== undefined)
+            updateData.mrp = Number(mrp);
+        if (makingCharges !== undefined)
+            updateData.makingCharges = Number(makingCharges);
+        if (image !== undefined)
+            updateData.image = image;
+        if (weight !== undefined)
+            updateData.weight = Number(weight);
+        if (metal !== undefined)
+            updateData.metal = metal;
+        if (occasion !== undefined)
+            updateData.occasion = occasion;
+        if (collection !== undefined)
+            updateData.collection = collection;
+        if (badge !== undefined)
+            updateData.badge = badge;
+        if (stock !== undefined)
+            updateData.stock = Number(stock);
+        if (description !== undefined)
+            updateData.description = description;
+        if (popularity !== undefined)
+            updateData.popularity = Number(popularity);
+        if (isFeatured !== undefined)
+            updateData.isFeatured = Boolean(isFeatured);
         const product = await prisma.product.update({
-            where: { id: Number(id) },
+            where,
             data: updateData,
         });
         return res.json({ product });
     }
     catch (error) {
+        console.error("updateProduct Error:", error);
         return res.status(500).json({ message: "Failed to update product." });
     }
 };
 export const deleteProduct = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.product.delete({ where: { id: Number(id) } });
+        const isNum = !isNaN(Number(id));
+        const where = isNum ? { id: Number(id) } : { slug: String(id) };
+        await prisma.product.delete({ where });
         return res.json({ message: "Product deleted successfully." });
     }
     catch (error) {
+        console.error("deleteProduct Error:", error);
         return res.status(500).json({ message: "Failed to delete product." });
     }
 };
