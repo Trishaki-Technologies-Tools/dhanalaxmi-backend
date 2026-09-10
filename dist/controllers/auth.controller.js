@@ -59,25 +59,16 @@ export const login = async (req, res) => {
 };
 export const loginOtp = async (req, res) => {
     try {
-        const { phone, name } = req.body;
+        const { phone } = req.body;
         if (!phone) {
             return res.status(400).json({ message: "Phone number is required." });
         }
         const cleanPhone = phone.replace(/\D/g, "").slice(-10);
         let user = await prisma.user.findFirst({ where: { phone: cleanPhone } });
         if (!user) {
-            user = await prisma.user.create({
-                data: {
-                    name: name && name.trim() ? name.trim() : `Customer ${cleanPhone.slice(-4)}`,
-                    phone: cleanPhone,
-                    role: "CUSTOMER",
-                },
-            });
-        }
-        else if (name && name.trim() && (user.name.startsWith("Customer ") || !user.name)) {
-            user = await prisma.user.update({
-                where: { id: user.id },
-                data: { name: name.trim() },
+            return res.status(404).json({
+                message: "No account found with this mobile number. Please create an account first.",
+                redirectTo: "/signup",
             });
         }
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET || "dhanalaxmi_secret", { expiresIn: "365d" });
@@ -91,20 +82,40 @@ export const loginOtp = async (req, res) => {
 };
 export const sendOtp = async (req, res) => {
     try {
-        const { phone } = req.body;
+        const { phone, intent = "login" } = req.body;
         // 1. Strict Indian Mobile Validation (TRAI standards & anti-dummy check)
         const validation = validateIndianMobileNumber(phone);
         if (!validation.valid) {
             return res.status(400).json({ message: validation.error || "Invalid mobile number." });
         }
         const cleanPhone = validation.cleanPhone;
+        // 2. Database Verification Before Hitting MSG91
+        const existingUser = await prisma.user.findFirst({ where: { phone: cleanPhone } });
+        if (intent === "login") {
+            if (!existingUser) {
+                return res.status(404).json({
+                    message: "No account found with this mobile number. Please create an account first.",
+                    userExists: false,
+                    redirectTo: "/signup",
+                });
+            }
+        }
+        else if (intent === "signup") {
+            if (existingUser) {
+                return res.status(409).json({
+                    message: "An account with this mobile number already exists. Please sign in.",
+                    userExists: true,
+                    redirectTo: "/login",
+                });
+            }
+        }
         const rawForwarded = req.headers["x-forwarded-for"];
         const clientIp = typeof rawForwarded === "string"
             ? rawForwarded.split(",")[0]?.trim()
             : Array.isArray(rawForwarded)
                 ? rawForwarded[0]?.trim()
                 : req.socket.remoteAddress || req.ip;
-        // 2. Anti-Bot & Dual Rate Limiter (by Phone & IP)
+        // 3. Anti-Bot & Dual Rate Limiter (by Phone & IP)
         const rateCheck = checkOtpRateLimit(cleanPhone, clientIp);
         if (!rateCheck.allowed) {
             return res.status(429).json({ message: rateCheck.error, retryAfter: rateCheck.retryAfterSeconds });
@@ -118,7 +129,10 @@ export const sendOtp = async (req, res) => {
             console.error("[OTP] MSG91 SMS delivery failed:", smsResult.error);
             return res.status(500).json({ message: "Failed to send SMS OTP. Please try again." });
         }
-        return res.json({ message: "OTP sent successfully to +91 " + cleanPhone });
+        return res.json({
+            message: "OTP sent successfully to +91 " + cleanPhone,
+            userExists: Boolean(existingUser),
+        });
     }
     catch (error) {
         console.error("[OTP] sendOtp error:", error);
@@ -127,7 +141,7 @@ export const sendOtp = async (req, res) => {
 };
 export const verifyOtp = async (req, res) => {
     try {
-        const { phone, otp, name } = req.body;
+        const { phone, otp, name, intent = "login" } = req.body;
         if (!phone || !otp) {
             return res.status(400).json({ message: "Phone and OTP are required." });
         }
@@ -147,20 +161,31 @@ export const verifyOtp = async (req, res) => {
         // OTP is valid - consume it
         otpStore.delete(cleanPhone);
         let user = await prisma.user.findFirst({ where: { phone: cleanPhone } });
-        if (!user) {
-            user = await prisma.user.create({
-                data: {
-                    name: name && name.trim() ? name.trim() : `Customer ${cleanPhone.slice(-4)}`,
-                    phone: cleanPhone,
-                    role: "CUSTOMER",
-                },
-            });
+        if (intent === "login") {
+            if (!user) {
+                return res.status(404).json({
+                    message: "No account found with this mobile number. Please create an account first.",
+                    redirectTo: "/signup",
+                });
+            }
         }
-        else if (name && name.trim() && (user.name.startsWith("Customer ") || !user.name)) {
-            user = await prisma.user.update({
-                where: { id: user.id },
-                data: { name: name.trim() },
-            });
+        else {
+            // intent === "signup"
+            if (!user) {
+                user = await prisma.user.create({
+                    data: {
+                        name: name && name.trim() ? name.trim() : `Customer ${cleanPhone.slice(-4)}`,
+                        phone: cleanPhone,
+                        role: "CUSTOMER",
+                    },
+                });
+            }
+            else if (name && name.trim()) {
+                user = await prisma.user.update({
+                    where: { id: user.id },
+                    data: { name: name.trim() },
+                });
+            }
         }
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET || "dhanalaxmi_secret", { expiresIn: "365d" });
         const { password: _, ...userWithoutPassword } = user;
